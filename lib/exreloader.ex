@@ -3,31 +3,30 @@
 ##
 defmodule ExReloader do
   use Application.Behaviour
-  alias GenX.Supervisor, as: Sup
 
   def start do
     :ok = Application.start :exreloader
   end
 
   def start(_, _) do
-    Sup.start_link sup_tree
+    ExReloader.start_link()
   end
 
-  defp sup_tree do
-    interval = Application.environment(:exreloader)[:interval] || 1000
-    Sup.OneForOne.new(id: ExReloader.Server.Sup,
-                      registered: :exreloader_sup,
-                      children: [Sup.Worker.new(id: ExReloader.Server,
-                                                start_func: {ExReloader.Server, :start_link, [interval]})])
+  use Supervisor.Behaviour
+
+  def start_link() do
+    :supervisor.start_link({:local, :exreloader_sup}, __MODULE__, [])
+  end
+
+  def init([]) do
+    interval = System.get_env("EXRELOADER_INTERVAL") || 5000
+    children = [ worker(ExReloader.Server, [interval]) ]
+    supervise children, strategy: :one_for_one
   end
 
   ##
 
-  def reload_modules(modules) do
-    lc module inlist modules, do: reload(module)
-  end
-
-  def reload(module) do
+  def reload_module(module) do
     :error_logger.info_msg "Reloading module: #{inspect module}"
     :code.purge(module)
     :code.load_file(module)
@@ -43,40 +42,12 @@ defmodule ExReloader do
     end
   end
 
-  def all_changed() do
-    lc {m, f} inlist :code.all_loaded, is_list(f), changed?(m), do: m
-  end
-
-  def changed?(module) do
-    try do
-        module_vsn(module.module_info) != module_vsn(:code.get_object_code(module))
-    catch _ ->
-        false
-    end
-  end
-
-  defp module_vsn({m, beam, _f}) do
-    {:ok, {^m, vsn}} = :beam_lib.version(beam)
-    vsn
-  end
-  defp module_vsn(l) when is_list(l) do
-    {_, attrs} = :lists.keyfind(:attributes, 1, l)
-    {_, vsn} = :lists.keyfind(:vsn, 1, attrs)
-    vsn
-  end
-
 end
 
 defmodule ExReloader.Server do
-  use GenServer.Behaviour
-  import GenX.GenServer
-  alias :gen_server, as: GenServer
+  use ExActor.Strict
 
-  def start_link(interval // 1000) do
-    GenServer.start {:local, :exreloader_checker}, __MODULE__, interval, []
-  end
-
-  def init(interval) do
+  definit interval do
     {:ok, {timestamp, interval}, interval}
   end
 
@@ -84,7 +55,7 @@ defmodule ExReloader.Server do
     {:stop, :shutdown, :stopped, state}
   end
 
-  definfo timeout, state: {last, timeout} do
+  definfo :timeout, state: {last, timeout} do
     now = timestamp
     run(last, now)
     {:noreply, {now, timeout}, timeout}
@@ -97,12 +68,12 @@ defmodule ExReloader.Server do
       case File.stat(filename) do
         {:ok, File.Stat[mtime: mtime]} when mtime >= from and mtime < to ->
           :error_logger.info_msg "File #{inspect filename} modified. Reloading..."
-          {:ok, file_name} = String.from_char_list(filename)
+          {:ok, filename} = String.from_char_list(filename)
           cond do
-            String.ends_with? file_name, ".ex" ->
-              ExReloader.reload_file(file_name)
-            String.ends_with? file_name, ".beam" ->
-              ExReloader.reload(module)
+            String.ends_with? filename, ".ex" ->
+              ExReloader.reload_file filename
+            String.ends_with? filename, ".beam" ->
+              ExReloader.reload_module module
             true ->
               :ok
           end

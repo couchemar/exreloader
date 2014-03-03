@@ -3,17 +3,18 @@ defmodule Exreloader.Mixfile do
 
   def project do
     [ app: :exreloader,
-      version: "0.0.1",
-      deps: deps ]
+      version: "0.0.2",
+      deps: deps,
+      elixir: "~> 0.12.4" ]
   end
 
   # Configuration for the OTP application
   def application do
-    [applications: [:genx],
+    [applications: [],
      mod: {ExReloader, []}]
   end
 
   defp deps do
-    [{ :genx, github: "yrashk/genx" }]
+    [{ :exactor, github: "sasa1977/exactor" }]
   end
 end
